@@ -1,0 +1,118 @@
+# System Architecture: Modular AI Document RAG Pipeline
+
+This document defines the production architecture for the high-precision RAG pipeline. The system is designed to handle complex structured documents (Invoices, Bank Statements, Legal Docs) with multi-document intelligence.
+
+---
+
+## 1. High-Level Flow Diagram
+
+```mermaid
+graph TD
+    A[PDF Upload] --> B[Block 1: Layout Analysis]
+    B --> C[Block 2: Region Deduplication]
+    C --> D[Block 3: Hybrid OCR Extraction]
+    D --> E[Block 4: Semantic Chunking]
+    E --> F[Block 5: Situational Contextualization]
+    F --> G[Block 6: Hybrid Indexing]
+    
+    subgraph Retrieval Phase
+    H[Query] --> I[Hybrid Retriever]
+    I --> J[Diversity Filter]
+    J --> K[Prompt Construction]
+    K --> L[LLM Generation]
+    end
+    
+    G -.-> I
+```
+
+---
+
+## 2. Block-by-Block Breakdown
+
+### BLOCK 1: Layout Analysis (Geometric Vision)
+*   **Purpose**: To identify the structural "role" of every region in the PDF using deep learning.
+*   **Input**: Raw PDF File Path.
+*   **Output**: List of Region Objects `{bbox, type, confidence, page}`.
+*   **Tools**: `Docling-Layout-Heron-101` (RT-DETR V2), `torchvision`.
+*   **Internal Steps**:
+    1.  Convert PDF pages to high-resolution images (300 DPI).
+    2.  Run Heron model to detect 17 structure classes (Table, Key-Value Region, Header, etc.).
+    3.  Filter out low-confidence detections (< 0.35).
+*   **Failure Cases**: Extremely blurry scans; documents with "text-in-image" backgrounds that confuse the detector.
+
+### BLOCK 2: Region Deduplication (Geometric Suppression)
+*   **Purpose**: Resolve "Heron Overlap"—where the model detects a large KV region AND individual text boxes inside it.
+*   **Input**: List of detected regions.
+*   **Output**: Filtered list of non-overlapping regions.
+*   **Internal Steps**:
+    1.  Identify "Complex" regions (Tables, Key-Value Regions).
+    2.  Check for intersection between "Simple" text boxes and "Complex" regions.
+    3.  If a text box is > 80% contained within a complex region, **suppress** it to prevent redundant LLM context.
+*   **Failure Cases**: Nested tables where the suppression logic might be too aggressive.
+
+### BLOCK 3: Hybrid OCR Extraction
+*   **Purpose**: Extract the actual text from the verified layout regions.
+*   **Input**: PDF Path + Filtered Regions.
+*   **Output**: Structured JSON content.
+*   **Tools**: `pdfplumber` (Digital Text), `pytesseract` (OCR fallback).
+*   **Internal Steps**:
+    1.  Attempt digital extraction using `pdfplumber`.
+    2.  If region is an image or empty, crop the page image and run Tesseract OCR.
+    3.  For **Tables**: Run "Competitive Scoring"—compare Grid-based vs. Flow-based extraction and pick the high-fidelity result.
+*   **Failure Cases**: Tables with merged cells (Grid strategy may fail); very small fonts.
+
+### BLOCK 4: Semantic Chunking
+*   **Purpose**: Convert raw JSON into bite-sized chunks for the vector database.
+*   **Input**: Structured JSON.
+*   **Output**: List of Chunk Objects `{text, metadata}`.
+*   **Internal Steps**:
+    1.  Convert KV-Regions into `Key: Value` strings.
+    2.  Flatten tables into either "Sentence" rows or "Markdown" strings depending on column count.
+    3.  Merge small consecutive text blocks to maintain semantic continuity (max 300 words).
+*   **Failure Cases**: Extremely large tables (may require specialized sub-chunking).
+
+### BLOCK 5: Situational Contextualization (Anthropic Technique)
+*   **Purpose**: Prepend document-level "identity" to every chunk so the vector is globally unique.
+*   **Input**: Chunks + Document Header + Filename.
+*   **Output**: Context-aware augmented chunks.
+*   **Tools**: `Ollama (Llama 3.2 3B)`.
+*   **Internal Steps**:
+    1.  Create a "Sliding Window" of ±2 chunks around the current chunk.
+    2.  Pass window + chunk to local LLM.
+    3.  LLM generates: *"This chunk describes [X] from document [Y] by [Company] on [Date]."*
+    4.  Prepend this sentence to the chunk text.
+*   **Failure Cases**: Ollama downtime; local CPU/GPU bottlenecking during high-volume uploads.
+
+### BLOCK 6: Hybrid Indexing & Retrieval
+*   **Purpose**: Store and retrieve the most relevant "situated" chunks.
+*   **Input**: Augmented Chunks.
+*   **Output**: Top K relevant context blocks.
+*   **Tools**: `ChromaDB` (Dense), `Rank-BM25` (Sparse).
+*   **Internal Steps**:
+    1.  Generate embeddings for augmented text (using Situational Context).
+    2.  Retrieve Top 30 candidates from Vector + Top 30 from BM25.
+    3.  Run **Rank Reciprocal Fusion (RRF)** to merge scores.
+    4.  Apply **Diversity Filter**: If multiple documents exist, ensure results are balanced (Round-Robin) so one doc doesn't dominate.
+*   **Failure Cases**: Query too generic ("What is this?"); synonym mismatch in BM25.
+
+---
+
+## 3. End-to-End Data Flow Example
+
+**Scenario**: User asks "Total of invoice 204869?" with two invoices in the system.
+
+1.  **Ingestion**: `invoice_204869.pdf` is uploaded.
+2.  **Contextualizer**: A chunk containing "$1,072.83" is prepended with: *"This chunk contains the total balance from invoice '204869' from Contoso Ltd."*
+3.  **Retrieval**: The user query "204869" strongly matches the **Situational Context** sentence in the vector space.
+4.  **Prompt**: The LLM receives:
+    `[Document: invoice_204869.pdf, Page: 1] This chunk contains the total balance... | Total: $1,072.83`
+5.  **Answer**: The LLM sees the explicit filename and provides the correct answer with high confidence.
+
+---
+
+## 4. Optimization Suggestions (Production Grade)
+
+1.  **Contextual Summarization**: Instead of a sliding window, generate a 200-word "Document Abstract" once per file and use it as a persistent prefix for all chunks. This is faster than 1 LLM call per chunk.
+2.  **Quantized Layout Engine**: Run Heron in `Int8` quantization to reduce VRAM usage on local hardware.
+3.  **Metadata Pre-Filtering**: Use the UI-selected `doc_type` to filter the ChromaDB query *before* execution to increase speed and precision.
+4.  **Async Batching**: Increase `MAX_CONTEXTUAL_PARALLEL` if the machine has multiple GPU cores to speed up situational generation.

@@ -1,0 +1,51 @@
+{
+  "name": "rag-chatbot-frontend",
+  "version": "1.0.0",
+  "description": "React frontend for RAG Chatbot application",
+  "main": "index.js",
+  "scripts": {
+    "start": "webpack serve --mode development",
+    "dev": "webpack serve --mode development",
+    "build": "webpack --mode production",
+    "build:dev": "webpack --mode development",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "rag",
+    "chatbot",
+    "react",
+    "pdf",
+    "qa"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^5.14.0",
+    "@mui/material": "^5.14.0",
+    "axios": "^1.15.2",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.2",
+    "@babel/preset-react": "^7.28.5",
+    "babel-loader": "^10.1.1",
+    "css-loader": "^6.8.1",
+    "dotenv": "^17.4.2",
+    "html-webpack-plugin": "^5.6.7",
+    "style-loader": "^3.3.3",
+    "webpack": "^5.106.2",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.2.3"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+}

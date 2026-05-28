@@ -1,0 +1,7 @@
+.env
+extracted
+uploads
+logs
+chroma_db
+metadata.json
+bm25_index
